@@ -1,0 +1,109 @@
+# @fieldcore/client
+
+Thin TypeScript/JavaScript client for [FieldCore](https://fieldcore.ai) — a hosted
+**cognition layer** (memory + identity + learning) for AI agents.
+
+This package is a **thin HTTP wrapper**. It contains no engine logic: the Brain
+(memory, constitution, coherence, learning) runs on the FieldCore server. The
+client just prepares context, hands it to you, and records the result.
+
+FieldCore is **BYOM (bring your own model)**. You keep calling your own LLM with
+your own key — FieldCore never sees or gates your model. It prepares the context
+before your call and learns from the answer after.
+
+> `memory` and `embedder` are **server-managed** and are not configurable from
+> this client. They exist only in the on-prem engine (shipped under license).
+
+## Install
+
+```bash
+npm i @fieldcore/client
+```
+
+Requires Node.js 18+ (uses the global `fetch`). No runtime dependencies.
+
+## BYOM usage (recommended)
+
+`prepare` → **call your own model** → `record`.
+
+```ts
+import { FieldCore } from "@fieldcore/client";
+
+const fc = new FieldCore({
+  apiKey: process.env.FIELDCORE_API_KEY!,
+  userId: "alice",
+});
+
+// 1. FieldCore builds the context (memory + constitution + coherence). No LLM call.
+const turn = await fc.prepare("remember I like short answers");
+
+if (!turn.allowed) {
+  throw new Error(`blocked by constitution: ${turn.reason}`);
+}
+
+// 2. Call YOUR OWN model with the prepared messages — your provider, your key.
+const answer = await myOwnLLM(turn.messages);
+
+// 3. Hand the answer back so FieldCore can persist + learn.
+await fc.record(turn, answer);
+```
+
+## chat() convenience
+
+If your plan enables server-side generation, `chat()` prepares context and
+generates the reply in one call:
+
+```ts
+import { FieldCore } from "@fieldcore/client";
+
+const fc = new FieldCore({
+  apiKey: process.env.FIELDCORE_API_KEY!,
+  userId: "alice",
+});
+
+const reply = await fc.chat("remember I like short answers");
+console.log(reply.text);
+console.log(reply.coherence, reply.sources);
+```
+
+## Other methods
+
+```ts
+await fc.sync();          // trigger server-side learning/consolidation
+await fc.memory(20);      // recent memory entries (default limit 20)
+await fc.metrics();       // usage / coherence metrics
+```
+
+## Errors
+
+Non-2xx responses throw a `FieldCoreError` with a `.status` field and a friendly
+message for `401` / `402` / `429`:
+
+```ts
+import { FieldCore, FieldCoreError } from "@fieldcore/client";
+
+try {
+  await fc.prepare("hi");
+} catch (err) {
+  if (err instanceof FieldCoreError) {
+    console.error(err.status, err.message);
+  }
+}
+```
+
+## Configuration
+
+```ts
+new FieldCore({
+  apiKey: "fck_live_xxx",   // required — from your FieldCore dashboard
+  userId: "alice",          // one key can drive many end-user brains
+  baseUrl: "https://api.fieldcore.ai", // optional override
+  model: "gpt-4o",          // optional hint forwarded on prepare/chat
+  constitution: "support",  // optional named constitution profile
+  timeoutMs: 60000,         // optional per-request timeout
+});
+```
+
+## License
+
+Proprietary. See `LICENSE`.

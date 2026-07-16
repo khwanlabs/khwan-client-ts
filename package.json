@@ -1,0 +1,41 @@
+{
+  "name": "@fieldcore/client",
+  "version": "0.1.0",
+  "description": "Thin TypeScript client for the FieldCore hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "fieldcore",
+    "ai",
+    "memory",
+    "agents",
+    "cognition",
+    "llm",
+    "byom"
+  ],
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}
