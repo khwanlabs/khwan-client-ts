@@ -1,14 +1,14 @@
-# @fieldcore/client
+# @khwan/client
 
-Thin TypeScript/JavaScript client for [FieldCore](https://fieldcore.ai) — a hosted
+Thin TypeScript/JavaScript client for [Khwan](https://khwan.ai) — a hosted
 **cognition layer** (memory + identity + learning) for AI agents.
 
 This package is a **thin HTTP wrapper**. It contains no engine logic: the Brain
-(memory, constitution, coherence, learning) runs on the FieldCore server. The
+(memory, constitution, coherence, learning) runs on the Khwan server. The
 client just prepares context, hands it to you, and records the result.
 
-FieldCore is **BYOM (bring your own model)**. You keep calling your own LLM with
-your own key — FieldCore never sees or gates your model. It prepares the context
+Khwan is **BYOM (bring your own model)**. You keep calling your own LLM with
+your own key — Khwan never sees or gates your model. It prepares the context
 before your call and learns from the answer after.
 
 > `memory` and `embedder` are **server-managed** and are not configurable from
@@ -17,7 +17,7 @@ before your call and learns from the answer after.
 ## Install
 
 ```bash
-npm i @fieldcore/client
+npm i @khwan/client
 ```
 
 Requires Node.js 18+ (uses the global `fetch`). No runtime dependencies.
@@ -27,14 +27,14 @@ Requires Node.js 18+ (uses the global `fetch`). No runtime dependencies.
 `prepare` → **call your own model** → `record`.
 
 ```ts
-import { FieldCore } from "@fieldcore/client";
+import { Khwan } from "@khwan/client";
 
-const fc = new FieldCore({
-  apiKey: process.env.FIELDCORE_API_KEY!,
+const fc = new Khwan({
+  apiKey: process.env.KHWAN_API_KEY!,
   userId: "alice",
 });
 
-// 1. FieldCore builds the context (memory + constitution + coherence). No LLM call.
+// 1. Khwan builds the context (memory + constitution + coherence). No LLM call.
 const turn = await fc.prepare("remember I like short answers");
 
 if (!turn.allowed) {
@@ -44,7 +44,7 @@ if (!turn.allowed) {
 // 2. Call YOUR OWN model with the prepared messages — your provider, your key.
 const answer = await myOwnLLM(turn.messages);
 
-// 3. Hand the answer back so FieldCore can persist + learn.
+// 3. Hand the answer back so Khwan can persist + learn.
 await fc.record(turn, answer);
 ```
 
@@ -54,10 +54,10 @@ If your plan enables server-side generation, `chat()` prepares context and
 generates the reply in one call:
 
 ```ts
-import { FieldCore } from "@fieldcore/client";
+import { Khwan } from "@khwan/client";
 
-const fc = new FieldCore({
-  apiKey: process.env.FIELDCORE_API_KEY!,
+const fc = new Khwan({
+  apiKey: process.env.KHWAN_API_KEY!,
   userId: "alice",
 });
 
@@ -76,16 +76,16 @@ await fc.metrics();       // usage / coherence metrics
 
 ## Errors
 
-Non-2xx responses throw a `FieldCoreError` with a `.status` field and a friendly
+Non-2xx responses throw a `KhwanError` with a `.status` field and a friendly
 message for `401` / `402` / `429`:
 
 ```ts
-import { FieldCore, FieldCoreError } from "@fieldcore/client";
+import { Khwan, KhwanError } from "@khwan/client";
 
 try {
   await fc.prepare("hi");
 } catch (err) {
-  if (err instanceof FieldCoreError) {
+  if (err instanceof KhwanError) {
     console.error(err.status, err.message);
   }
 }
@@ -94,10 +94,10 @@ try {
 ## Configuration
 
 ```ts
-new FieldCore({
-  apiKey: "fck_live_xxx",   // required — from your FieldCore dashboard
+new Khwan({
+  apiKey: "kwk_live_xxx",   // required — from your Khwan dashboard
   userId: "alice",          // one key can drive many end-user brains
-  baseUrl: "https://api.fieldcore.ai", // optional override
+  baseUrl: "https://api.khwan.ai", // optional override
   model: "gpt-4o",          // optional hint forwarded on prepare/chat
   constitution: "support",  // optional named constitution profile
   timeoutMs: 60000,         // optional per-request timeout
