@@ -1,7 +1,7 @@
 {
-  "name": "@fieldcore/client",
+  "name": "@khwan/client",
   "version": "0.1.0",
-  "description": "Thin TypeScript client for the FieldCore hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
+  "description": "Thin TypeScript client for the Khwan hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "private": false,
@@ -27,7 +27,7 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "fieldcore",
+    "khwan",
     "ai",
     "memory",
     "agents",

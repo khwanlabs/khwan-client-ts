@@ -1,16 +1,16 @@
 /**
- * FieldCore hosted client (public).
+ * Khwan hosted client (public).
  *
- * A thin HTTP wrapper — contains NO FieldCore engine code. The Brain (memory,
- * constitution, coherence, learning) runs on the FieldCore server; this client
+ * A thin HTTP wrapper — contains NO Khwan engine code. The Brain (memory,
+ * constitution, coherence, learning) runs on the Khwan server; this client
  * just connects and hands results back to your app.
  *
- * Positioning: FieldCore is a **cognition layer**, not the model. You bring your
+ * Positioning: Khwan is a **cognition layer**, not the model. You bring your
  * own model (BYOM). Two ways to use it:
  *
  * ```ts
  * // BYOM (recommended): FC prepares context, YOU call your own model, FC records
- * const fc = new FieldCore({ apiKey: "fck_live_xxx", userId: "alice" });
+ * const fc = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
  * const turn = await fc.prepare("remember I like short answers"); // no LLM on FC's side
  * const answer = await myOwnLLM(turn.messages);                   // your model, your key
  * await fc.record(turn, answer);                                  // FC learns
@@ -29,8 +29,8 @@
 /** Client library version. */
 export const VERSION = "0.1.0";
 
-/** Default FieldCore API base URL. */
-export const DEFAULT_BASE_URL = "https://api.fieldcore.ai";
+/** Default Khwan API base URL. */
+export const DEFAULT_BASE_URL = "https://api.khwan.ai";
 
 /** Shape of a single chat message forwarded to your own model. */
 export interface Message {
@@ -58,9 +58,9 @@ export interface ReplyData {
   [key: string]: unknown;
 }
 
-/** Options for constructing a {@link FieldCore} client. */
-export interface FieldCoreOptions {
-  /** API key from your FieldCore dashboard. Required. */
+/** Options for constructing a {@link Khwan} client. */
+export interface KhwanOptions {
+  /** API key from your Khwan dashboard. Required. */
   apiKey: string;
   /** End-user identifier — one key can drive many end-user brains. */
   userId: string;
@@ -85,16 +85,16 @@ export interface FieldCoreOptions {
 }
 
 /** Raised on a non-2xx response. `status` is the HTTP status code. */
-export class FieldCoreError extends Error {
+export class KhwanError extends Error {
   /** HTTP status code of the failed response. */
   readonly status: number;
 
   constructor(status: number, message: string) {
     super(message);
-    this.name = "FieldCoreError";
+    this.name = "KhwanError";
     this.status = status;
     // Restore prototype chain for instanceof across compile targets.
-    Object.setPrototypeOf(this, FieldCoreError.prototype);
+    Object.setPrototypeOf(this, KhwanError.prototype);
   }
 }
 
@@ -128,8 +128,8 @@ export class Reply {
 }
 
 /**
- * Context FieldCore prepared for one turn. Feed `.messages` to your own model,
- * then pass this object (plus the model's answer) back to {@link FieldCore.record}.
+ * Context Khwan prepared for one turn. Feed `.messages` to your own model,
+ * then pass this object (plus the model's answer) back to {@link Khwan.record}.
  */
 export class Turn {
   private readonly _d: TurnData;
@@ -177,17 +177,17 @@ export class Turn {
 type HttpMethod = "GET" | "POST";
 
 /**
- * Thin HTTP client for the FieldCore hosted cognition layer.
+ * Thin HTTP client for the Khwan hosted cognition layer.
  *
  * @example
  * ```ts
- * const fc = new FieldCore({ apiKey: "fck_live_xxx", userId: "alice" });
+ * const fc = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
  * const turn = await fc.prepare("hello");
  * const answer = await myModel(turn.messages);
  * await fc.record(turn, answer);
  * ```
  */
-export class FieldCore {
+export class Khwan {
   /** The end-user identifier this client acts on behalf of. */
   readonly userId: string;
 
@@ -196,7 +196,7 @@ export class FieldCore {
   private readonly _timeoutMs: number;
   private readonly _cfg: Record<string, string>;
 
-  constructor(options: FieldCoreOptions) {
+  constructor(options: KhwanOptions) {
     const {
       apiKey,
       userId,
@@ -211,12 +211,12 @@ export class FieldCore {
     if (memory !== undefined || embedder !== undefined) {
       throw new TypeError(
         "memory/embedder are server-managed in the hosted client; they are " +
-          "only configurable in the on-prem engine (fieldcore-engine, under license).",
+          "only configurable in the on-prem engine (khwan-engine, under license).",
       );
     }
     if (!apiKey) {
       throw new Error(
-        "apiKey is required (get one from your FieldCore dashboard).",
+        "apiKey is required (get one from your Khwan dashboard).",
       );
     }
 
@@ -237,7 +237,7 @@ export class FieldCore {
 
   private _headers(): Record<string, string> {
     const h: Record<string, string> = { "X-API-Key": this._key };
-    if (this.userId) h["X-FieldCore-User"] = this.userId; // 1 key → many end-user brains
+    if (this.userId) h["X-Khwan-User"] = this.userId; // 1 key → many end-user brains
     return h;
   }
 
@@ -262,9 +262,9 @@ export class FieldCore {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new FieldCoreError(0, `request timed out after ${this._timeoutMs}ms`);
+        throw new KhwanError(0, `request timed out after ${this._timeoutMs}ms`);
       }
-      throw new FieldCoreError(
+      throw new KhwanError(
         0,
         `network error: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -283,7 +283,7 @@ export class FieldCore {
         const detail = await res.text().catch(() => "");
         message = detail ? detail.slice(0, 300) : `HTTP ${res.status}`;
       }
-      throw new FieldCoreError(res.status, message);
+      throw new KhwanError(res.status, message);
     }
 
     const text = await res.text();
@@ -306,7 +306,7 @@ export class FieldCore {
 
   /**
    * Hand your model's answer back so FC can persist + learn.
-   * @param turn The turn returned by {@link FieldCore.prepare}.
+   * @param turn The turn returned by {@link Khwan.prepare}.
    * @param answer Your model's response text.
    */
   async record(turn: Turn, answer: string): Promise<void> {
@@ -319,7 +319,7 @@ export class FieldCore {
   // ---- convenience: server-side generation ----
 
   /**
-   * Convenience path: FieldCore prepares context AND generates the reply
+   * Convenience path: Khwan prepares context AND generates the reply
    * server-side (if your plan enables it).
    */
   async chat(input: string): Promise<Reply> {
@@ -348,4 +348,4 @@ export class FieldCore {
   }
 }
 
-export default FieldCore;
+export default Khwan;
