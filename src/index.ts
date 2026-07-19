@@ -72,6 +72,14 @@ export interface KhwanOptions {
   /** Per-request timeout in milliseconds. Defaults to 60000. */
   timeoutMs?: number;
   /**
+   * Automatic retries on transient failures (HTTP 429/502/503/504, honoring
+   * `Retry-After`, plus network errors on idempotent calls). Exponential backoff
+   * with jitter. Defaults to 2. Set 0 to disable. A rejected `429` is always safe
+   * to retry; network errors are retried only for reads and `prepare` (never for
+   * `record`/`sync`/`reset`, which are not safe to replay).
+   */
+  maxRetries?: number;
+  /**
    * Server-managed — NOT configurable in the hosted client. Passing this throws.
    * @internal
    */
@@ -170,6 +178,7 @@ export class Khwan {
   private readonly _key: string;
   private readonly _base: string;
   private readonly _timeoutMs: number;
+  private readonly _maxRetries: number;
   private readonly _cfg: Record<string, string>;
 
   constructor(options: KhwanOptions) {
@@ -181,6 +190,7 @@ export class Khwan {
       constitution,
       core,
       timeoutMs = 60_000,
+      maxRetries = 2,
       memory,
       embedder,
     } = options;
@@ -202,6 +212,7 @@ export class Khwan {
     this._key = apiKey;
     this._base = baseUrl.replace(/\/+$/, "");
     this._timeoutMs = timeoutMs;
+    this._maxRetries = Math.max(0, maxRetries);
 
     // Session config forwarded to the server (model may be overridden by the
     // account's dashboard settings; constitution is a named profile reference).
@@ -220,6 +231,32 @@ export class Khwan {
     return h;
   }
 
+  /** Idempotent = safe to retry after an ambiguous network error (the request may
+   * already have been processed). Reads and `prepare` are safe; `record`/`sync`/
+   * `reset` are not — replaying them could double-apply or hit an already-consumed
+   * turn_token. (A rejected 429/503 is safe to retry regardless — see below.) */
+  private _isIdempotent(method: HttpMethod, path: string): boolean {
+    return method === "GET" || path === "/prepare";
+  }
+
+  private _sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /** Backoff for the given attempt: honor Retry-After if present, else exponential
+   * (0.5s, 1s, 2s, … capped at 20s) with ±25% jitter. */
+  private _retryDelayMs(attempt: number, res?: Response): number {
+    const ra = res?.headers.get("retry-after");
+    if (ra) {
+      const secs = Number(ra);
+      if (Number.isFinite(secs)) return Math.min(secs * 1000, 60_000);
+      const date = Date.parse(ra);
+      if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+    }
+    const base = Math.min(500 * 2 ** attempt, 20_000);
+    return Math.round(base * (0.75 + Math.random() * 0.5));
+  }
+
   private async _request<T = Record<string, unknown>>(
     method: HttpMethod,
     path: string,
@@ -227,46 +264,63 @@ export class Khwan {
   ): Promise<T> {
     const headers = this._headers();
     if (body !== undefined) headers["Content-Type"] = "application/json";
+    // Rejected before processing (429/502/503/504) → always safe to retry; a
+    // network error is retried only for idempotent calls.
+    const RETRY_STATUS = new Set([429, 502, 503, 504]);
+    const idempotent = this._isIdempotent(method, path);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this._timeoutMs);
-
-    let res: Response;
-    try {
-      res = await fetch(this._base + path, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new KhwanError(0, `request timed out after ${this._timeoutMs}ms`);
+    for (let attempt = 0; ; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this._timeoutMs);
+      let res: Response;
+      try {
+        res = await fetch(this._base + path, {
+          method,
+          headers,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const timedOut = err instanceof Error && err.name === "AbortError";
+        // A timeout may have been processed server-side (like any network error),
+        // so only retry it for idempotent calls.
+        if (idempotent && attempt < this._maxRetries) {
+          await this._sleep(this._retryDelayMs(attempt));
+          continue;
+        }
+        if (timedOut) {
+          throw new KhwanError(0, `request timed out after ${this._timeoutMs}ms`);
+        }
+        throw new KhwanError(
+          0,
+          `network error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        clearTimeout(timer);
       }
-      throw new KhwanError(
-        0,
-        `network error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      clearTimeout(timer);
-    }
 
-    if (Math.floor(res.status / 100) !== 2) {
-      const friendly: Record<number, string> = {
-        401: "unauthorized — bad or missing API key",
-        402: "payment required — add a payment method / upgrade your plan",
-        429: "quota exceeded — you are over your plan's limit",
-      };
-      let message = friendly[res.status];
-      if (!message) {
-        const detail = await res.text().catch(() => "");
-        message = detail ? detail.slice(0, 300) : `HTTP ${res.status}`;
+      if (RETRY_STATUS.has(res.status) && attempt < this._maxRetries) {
+        await this._sleep(this._retryDelayMs(attempt, res));
+        continue;
       }
-      throw new KhwanError(res.status, message);
-    }
 
-    const text = await res.text();
-    return (text ? JSON.parse(text) : {}) as T;
+      if (Math.floor(res.status / 100) !== 2) {
+        const friendly: Record<number, string> = {
+          401: "unauthorized — bad or missing API key",
+          402: "payment required — add a payment method / upgrade your plan",
+          429: "rate limited / over your plan's limit — retry later",
+        };
+        let message = friendly[res.status];
+        if (!message) {
+          const detail = await res.text().catch(() => "");
+          message = detail ? detail.slice(0, 300) : `HTTP ${res.status}`;
+        }
+        throw new KhwanError(res.status, message);
+      }
+
+      const text = await res.text();
+      return (text ? JSON.parse(text) : {}) as T;
+    }
   }
 
   // ---- the memory loop: prepare → (your model) → record ----
