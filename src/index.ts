@@ -50,8 +50,13 @@ export interface TurnData {
 export interface KhwanOptions {
   /** API key from your Khwan dashboard. Required. */
   apiKey: string;
-  /** End-user identifier — one key can drive many end-user brains. */
-  userId: string;
+  /**
+   * OPTIONAL end-user id. Omit for one shared brain per account/core. Set it (sent as
+   * `X-Khwan-User`) to give each of your end-users a fully ISOLATED sub-brain — one
+   * API key → a private brain per user. Requires a paid plan. Isolation combines with
+   * `core`: `account::<core>::@<user>`.
+   */
+  userId?: string;
   /** Override the API base URL. Defaults to {@link DEFAULT_BASE_URL}. */
   baseUrl?: string;
   /** Model hint forwarded to the server on `prepare`. */
@@ -156,8 +161,8 @@ type HttpMethod = "GET" | "POST";
  * ```
  */
 export class Khwan {
-  /** The end-user identifier this client acts on behalf of. */
-  readonly userId: string;
+  /** The end-user this client acts for, if any — set ⇒ an isolated per-user sub-brain. */
+  readonly userId?: string;
 
   /** The isolated core this client targets, if any (omit ⇒ default core). */
   readonly core?: string;
@@ -210,7 +215,7 @@ export class Khwan {
 
   private _headers(): Record<string, string> {
     const h: Record<string, string> = { "X-API-Key": this._key };
-    if (this.userId) h["X-Khwan-User"] = this.userId; // 1 key → many end-user brains
+    if (this.userId) h["X-Khwan-User"] = this.userId; // optional: isolated sub-brain per end-user
     if (this.core) h["X-Khwan-Core"] = this.core; // select the isolated core
     return h;
   }
