@@ -5,19 +5,15 @@
  * constitution, coherence, learning) runs on the Khwan server; this client
  * just connects and hands results back to your app.
  *
- * Positioning: Khwan is a **cognition layer**, not the model. You bring your
- * own model (BYOM). Two ways to use it:
+ * Positioning: Khwan is a pure **AI-memory layer** — it never runs a model.
+ * You always call your own model (BYOM). The only loop is
+ * `prepare` → (your model) → `record`:
  *
  * ```ts
- * // BYOM (recommended): FC prepares context, YOU call your own model, FC records
- * const fc = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
- * const turn = await fc.prepare("remember I like short answers"); // no LLM on FC's side
- * const answer = await myOwnLLM(turn.messages);                   // your model, your key
- * await fc.record(turn, answer);                                  // FC learns
- *
- * // Convenience (server-side generation, if your plan enables it):
- * const reply = await fc.chat("remember I like short answers");
- * console.log(reply.text, reply.coherence);
+ * const kw = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
+ * const turn = await kw.prepare("remember I like short answers"); // no LLM on Khwan's side
+ * const answer = await yourModel(turn.messages);                  // your model, your key
+ * await kw.record(turn, answer);                                  // Khwan learns
  * ```
  *
  * `memory`/`embedder` are NOT configurable here — they are server-managed. They
@@ -50,14 +46,6 @@ export interface TurnData {
   [key: string]: unknown;
 }
 
-/** Raw JSON returned by `POST /chat`. */
-export interface ReplyData {
-  response?: string;
-  coherence?: number | null;
-  sources?: unknown[];
-  [key: string]: unknown;
-}
-
 /** Options for constructing a {@link Khwan} client. */
 export interface KhwanOptions {
   /** API key from your Khwan dashboard. Required. */
@@ -66,11 +54,11 @@ export interface KhwanOptions {
   userId: string;
   /** Override the API base URL. Defaults to {@link DEFAULT_BASE_URL}. */
   baseUrl?: string;
-  /** Model hint forwarded to the server on `prepare`/`chat`. */
+  /** Model hint forwarded to the server on `prepare`. */
   model?: string;
   /**
-   * Selects the isolated core (แกน) this client targets. Each named core is a
-   * fully isolated brain (its own memory, identity, learning) within the same
+   * Selects the isolated core this client targets. Each named core is a fully
+   * isolated brain (its own memory, identity, learning) within the same
    * account. Omit ⇒ the account's default core.
    */
   core?: string;
@@ -101,35 +89,6 @@ export class KhwanError extends Error {
     this.status = status;
     // Restore prototype chain for instanceof across compile targets.
     Object.setPrototypeOf(this, KhwanError.prototype);
-  }
-}
-
-/** A server-generated chat reply. */
-export class Reply {
-  private readonly _d: ReplyData;
-
-  constructor(data: ReplyData) {
-    this._d = data;
-  }
-
-  /** The generated response text. */
-  get text(): string {
-    return this._d.response ?? "";
-  }
-
-  /** Coherence score for this reply, if the server reported one. */
-  get coherence(): number | null {
-    return this._d.coherence ?? null;
-  }
-
-  /** Memory/context sources the server drew on. */
-  get sources(): unknown[] {
-    return this._d.sources ?? [];
-  }
-
-  /** The raw response payload. */
-  raw(): ReplyData {
-    return this._d;
   }
 }
 
@@ -183,21 +142,24 @@ export class Turn {
 type HttpMethod = "GET" | "POST";
 
 /**
- * Thin HTTP client for the Khwan hosted cognition layer.
+ * Thin HTTP client for the Khwan hosted memory layer.
+ *
+ * Khwan never generates text — you always call your own model. The only loop
+ * is `prepare` → (your model) → `record`.
  *
  * @example
  * ```ts
- * const fc = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
- * const turn = await fc.prepare("hello");
- * const answer = await myModel(turn.messages);
- * await fc.record(turn, answer);
+ * const kw = new Khwan({ apiKey: "kwk_live_xxx", userId: "alice" });
+ * const turn = await kw.prepare("hello");
+ * const answer = await yourModel(turn.messages);
+ * await kw.record(turn, answer);
  * ```
  */
 export class Khwan {
   /** The end-user identifier this client acts on behalf of. */
   readonly userId: string;
 
-  /** The isolated core (แกน) this client targets, if any (omit ⇒ default core). */
+  /** The isolated core this client targets, if any (omit ⇒ default core). */
   readonly core?: string;
 
   private readonly _key: string;
@@ -249,7 +211,7 @@ export class Khwan {
   private _headers(): Record<string, string> {
     const h: Record<string, string> = { "X-API-Key": this._key };
     if (this.userId) h["X-Khwan-User"] = this.userId; // 1 key → many end-user brains
-    if (this.core) h["X-Khwan-Core"] = this.core; // select the isolated core (แกน)
+    if (this.core) h["X-Khwan-Core"] = this.core; // select the isolated core
     return h;
   }
 
@@ -302,10 +264,10 @@ export class Khwan {
     return (text ? JSON.parse(text) : {}) as T;
   }
 
-  // ---- BYOM: prepare → (your model) → record ----
+  // ---- the memory loop: prepare → (your model) → record ----
 
   /**
-   * FC builds the context (memory + constitution + coherence). No LLM call.
+   * Khwan builds the context (memory + constitution + coherence). No LLM call.
    * Feed the returned {@link Turn.messages} to your own model.
    */
   async prepare(input: string): Promise<Turn> {
@@ -317,7 +279,7 @@ export class Khwan {
   }
 
   /**
-   * Hand your model's answer back so FC can persist + learn.
+   * Hand your model's answer back so Khwan can persist + learn.
    * @param turn The turn returned by {@link Khwan.prepare}.
    * @param answer Your model's response text.
    */
@@ -326,20 +288,6 @@ export class Khwan {
       turn_token: turn.turnToken,
       answer,
     });
-  }
-
-  // ---- convenience: server-side generation ----
-
-  /**
-   * Convenience path: Khwan prepares context AND generates the reply
-   * server-side (if your plan enables it).
-   */
-  async chat(input: string): Promise<Reply> {
-    const data = await this._request<ReplyData>("POST", "/chat", {
-      input,
-      ...this._cfg,
-    });
-    return new Reply(data);
   }
 
   // ---- learning / inspection ----
@@ -360,8 +308,8 @@ export class Khwan {
   }
 
   /**
-   * List the isolated cores (แกน) available on this account. The account's
-   * default core is included with `is_default: true`.
+   * List the isolated cores available on this account. The account's default
+   * core is included with `is_default: true`.
    */
   async cores(): Promise<Array<{ slug: string; name: string; is_default: boolean }>> {
     return this._request("GET", "/cores");
