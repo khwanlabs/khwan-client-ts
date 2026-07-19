@@ -68,6 +68,12 @@ export interface KhwanOptions {
   baseUrl?: string;
   /** Model hint forwarded to the server on `prepare`/`chat`. */
   model?: string;
+  /**
+   * Selects the isolated core (แกน) this client targets. Each named core is a
+   * fully isolated brain (its own memory, identity, learning) within the same
+   * account. Omit ⇒ the account's default core.
+   */
+  core?: string;
   /** Named constitution profile reference forwarded to the server. */
   constitution?: string;
   /** Per-request timeout in milliseconds. Defaults to 60000. */
@@ -191,6 +197,9 @@ export class Khwan {
   /** The end-user identifier this client acts on behalf of. */
   readonly userId: string;
 
+  /** The isolated core (แกน) this client targets, if any (omit ⇒ default core). */
+  readonly core?: string;
+
   private readonly _key: string;
   private readonly _base: string;
   private readonly _timeoutMs: number;
@@ -203,6 +212,7 @@ export class Khwan {
       baseUrl = DEFAULT_BASE_URL,
       model,
       constitution,
+      core,
       timeoutMs = 60_000,
       memory,
       embedder,
@@ -221,6 +231,7 @@ export class Khwan {
     }
 
     this.userId = userId;
+    this.core = core;
     this._key = apiKey;
     this._base = baseUrl.replace(/\/+$/, "");
     this._timeoutMs = timeoutMs;
@@ -238,6 +249,7 @@ export class Khwan {
   private _headers(): Record<string, string> {
     const h: Record<string, string> = { "X-API-Key": this._key };
     if (this.userId) h["X-Khwan-User"] = this.userId; // 1 key → many end-user brains
+    if (this.core) h["X-Khwan-Core"] = this.core; // select the isolated core (แกน)
     return h;
   }
 
@@ -345,6 +357,14 @@ export class Khwan {
   /** Fetch usage/coherence metrics for this user. */
   async metrics(): Promise<Record<string, unknown>> {
     return this._request("GET", "/metrics");
+  }
+
+  /**
+   * List the isolated cores (แกน) available on this account. The account's
+   * default core is included with `is_default: true`.
+   */
+  async cores(): Promise<Array<{ slug: string; name: string; is_default: boolean }>> {
+    return this._request("GET", "/cores");
   }
 }
 
