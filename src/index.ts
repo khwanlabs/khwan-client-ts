@@ -339,14 +339,46 @@ export class Khwan {
 
   /**
    * Hand your model's answer back so Khwan can persist + learn.
+   *
+   * Awaited by default, and that default is deliberate. `prepare` for the next
+   * turn retrieves what has been written, so a `record` still in flight means
+   * the turn you just had is missing from the context of the turn after it —
+   * intermittently, under load, in a way that reads as "the memory is flaky"
+   * rather than as a race. Correctness first; opt into the latency win.
+   *
+   * With `background: true` the request is dispatched and the promise resolves
+   * immediately. Use it when the turn is the last one (a one-shot job, a webhook
+   * reply) or when the next `prepare` is far enough away that the write will
+   * have landed. Failures are swallowed — a lost record costs one turn of
+   * learning, and the point of this mode is never to delay a reply.
+   *
+   * For a strict sequence at lower latency, hold the promise from the default
+   * call and await it just before the next `prepare`, rather than dropping it.
+   *
    * @param turn The turn returned by {@link Khwan.prepare}.
    * @param answer Your model's response text.
+   * @param opts `background` — dispatch without awaiting. Default `false`.
    */
-  async record(turn: Turn, answer: string): Promise<void> {
-    await this._request("POST", "/record", {
-      turn_token: turn.turnToken,
-      answer,
-    });
+  async record(
+    turn: Turn,
+    answer: string,
+    opts: { background?: boolean } = {},
+  ): Promise<void> {
+    const send = () =>
+      this._request("POST", "/record", {
+        turn_token: turn.turnToken,
+        answer,
+      });
+
+    if (!opts.background) {
+      await send();
+      return;
+    }
+
+    // Attach a catch before returning: an unhandled rejection from a dropped
+    // promise crashes a Node process by default, which is the opposite of what
+    // "never delay the reply" is for.
+    void send().catch(() => {});
   }
 
   // ---- learning / inspection ----
