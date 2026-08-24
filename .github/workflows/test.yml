@@ -1,0 +1,32 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The repo is public: this is what stops a drive-by PR — or us — from quietly
+# undoing a guarantee the tests exist to hold. sdk.test.mjs asserts that
+# synthesize() calls nothing but the caller's distill, that record() is awaited
+# by default, and that an async distill is actually awaited (without which the
+# SDK posts a Promise as somebody's standing behaviour rule).
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Maintenance LTS and current. The tests use node:test, which is why
+        # there is no test framework to install.
+        node-version: ["20", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci || npm install
+      - run: npm run typecheck
+      - run: npm test
+      # What actually ships is dist/, not src/ — a build that drops a method is
+      # invisible to a source-level test.
+      - run: npm pack --dry-run
