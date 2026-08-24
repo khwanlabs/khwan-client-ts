@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Thin TypeScript client for the Khwan hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "private": false,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
