@@ -48,6 +48,12 @@ const answer = await yourModel(turn.messages);
 
 // 3. Hand the answer back so Khwan can persist + learn.
 await kw.record(turn, answer);
+
+// `record` is awaited by default, on purpose: `prepare` for the next turn reads
+// what has been written, so a record still in flight drops this turn from the
+// next turn's context — only under load, which makes it read as flaky memory
+// rather than as a race. Skip the wait when the turn is the last one:
+await kw.record(turn, answer, { background: true });
 ```
 
 ## Selecting a core
