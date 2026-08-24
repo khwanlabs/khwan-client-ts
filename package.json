@@ -1,6 +1,6 @@
 {
   "name": "@khwan/client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Thin TypeScript client for the Khwan hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
   "type": "module",
   "license": "MIT",
