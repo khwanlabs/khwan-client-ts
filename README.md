@@ -56,6 +56,28 @@ await kw.record(turn, answer);
 await kw.record(turn, answer, { background: true });
 ```
 
+## Gate the answer, review what it learned
+
+```ts
+const v = await kw.verify(turn, draft);   // score a draft BEFORE you ship it
+if (!v.ok) { /* regenerate, or route to a human */ }
+
+for (const l of await kw.lessons()) {     // the standing rules it distilled
+  console.log(l.response_text, "←", l.source_link);
+}
+await kw.deleteLesson(badId);             // the only negative signal in the system
+```
+
+## Own the learning step
+
+`prepare → your model → record` covers answering. The same shape covers learning —
+Khwan clusters the turns, **your** model writes the rule, so no packet text reaches
+a provider Khwan chose:
+
+```ts
+await kw.synthesize((system, prompt) => myLlm(system, prompt));
+```
+
 ## Selecting a core
 
 An account can hold multiple **isolated cores** — each a fully separate brain

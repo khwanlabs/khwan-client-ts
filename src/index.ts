@@ -47,6 +47,33 @@ export interface TurnData {
 }
 
 /** Options for constructing a {@link Khwan} client. */
+/** One cluster of related turns, rendered for your model to distil into a rule. */
+export interface SynthesisCluster {
+  id: string;
+  /** Feed this to your model alongside {@link SynthesisPlan.system}. */
+  prompt: string;
+  n_sources?: number;
+  from_correction?: boolean;
+}
+
+/** What `/synthesize/prepare` returns. `synthesis_token` is null when there is
+ * nothing to learn, in which case no token was minted and none can expire. */
+export interface SynthesisPlan {
+  synthesis_token: string | null;
+  /** The instruction the hosted pass distils with — use it so your rules come out
+   * the same shape as ours: one imperative line, or the literal `NONE`. */
+  system?: string;
+  clusters?: SynthesisCluster[];
+  packets_scanned?: number;
+}
+
+/** A rule your model produced for one cluster. `text: null` (or `"NONE"`) records
+ * that the cluster held nothing durable — an outcome, not a failure. */
+export interface DistilledLesson {
+  cluster_id: string;
+  text: string | null;
+}
+
 export interface KhwanOptions {
   /** API key from your Khwan dashboard. Required. */
   apiKey: string;
@@ -152,7 +179,7 @@ export class Turn {
   }
 }
 
-type HttpMethod = "GET" | "POST";
+type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 /**
  * Thin HTTP client for the Khwan hosted memory layer.
@@ -236,7 +263,12 @@ export class Khwan {
    * `reset` are not — replaying them could double-apply or hit an already-consumed
    * turn_token. (A rejected 429/503 is safe to retry regardless — see below.) */
   private _isIdempotent(method: HttpMethod, path: string): boolean {
-    return method === "GET" || path === "/prepare";
+    // `/verify` is documented as non-destructive server-side: it never consumes
+    // the turn token and never persists, so a retry after a dropped connection is
+    // safe and beats failing a gate check on a network blip.
+    // `/synthesize/prepare` is deliberately absent — each call mints a new batch
+    // token, so retrying would orphan one.
+    return method === "GET" || path === "/prepare" || path === "/verify";
   }
 
   private _sleep(ms: number): Promise<void> {
@@ -379,6 +411,127 @@ export class Khwan {
     // promise crashes a Node process by default, which is the opposite of what
     // "never delay the reply" is for.
     void send().catch(() => {});
+  }
+
+  /**
+   * Score a draft answer against the brain BEFORE you ship it.
+   *
+   * `prepare` gates the turn; this gates the *answer*. Resolves to
+   * `{ ok, reason, coherence, contradiction }` — ship when `ok`, regenerate or
+   * route to a human when not.
+   *
+   * Non-destructive: it never consumes the turn token, so `record` still works
+   * afterwards. Treat a transport failure as `ok` rather than blocking a reply on
+   * a network blip.
+   */
+  async verify(turn: Turn, draft: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { answer: draft };
+    if (turn.turnToken) body.turn_token = turn.turnToken;
+    return this._request("POST", "/verify", body);
+  }
+
+  // ---- lesson review ----
+
+  /**
+   * The standing rules synthesis has written for this core.
+   *
+   * A lesson is a behaviour rule, not a fact — the most-reinforced ones are
+   * injected on every turn regardless of relevance. `source_link` on each entry
+   * points back at the turns it was distilled from.
+   */
+  async lessons(limit = 50): Promise<Array<Record<string, unknown>>> {
+    const out = await this._request<{ lessons?: Array<Record<string, unknown>> }>(
+      "GET",
+      `/lessons?limit=${encodeURIComponent(limit)}`,
+    );
+    return out.lessons ?? [];
+  }
+
+  /**
+   * Remove a rule the agent should not have learned.
+   *
+   * Retrieval only reinforces — a lesson that gets used has its expiry extended —
+   * so a rule that is wrong but relevant never expires on its own. This is the
+   * only negative signal in the system.
+   */
+  async deleteLesson(lessonId: string): Promise<Record<string, unknown>> {
+    return this._request("DELETE", `/lessons/${encodeURIComponent(lessonId)}`);
+  }
+
+  /**
+   * Correct a rule's wording, keeping its sources and use history. The server
+   * re-embeds from the new text in the same write, so retrieval matches what the
+   * rule now says rather than what it used to.
+   */
+  async editLesson(lessonId: string, text: string): Promise<Record<string, unknown>> {
+    return this._request("PATCH", `/lessons/${encodeURIComponent(lessonId)}`, { text });
+  }
+
+  // ---- BYOM synthesis: the learning loop, with your model in the middle ----
+
+  /**
+   * Cluster recent turns and hand them back for YOUR model to distil.
+   *
+   * No model is called — on this path no packet text reaches a provider Khwan
+   * chose. `synthesis_token` is null when there is nothing to learn. Feed
+   * `system` plus each cluster's `prompt` to your model; it answers with one
+   * imperative rule, or the literal `NONE`.
+   */
+  async synthesizePrepare(): Promise<SynthesisPlan> {
+    return this._request<SynthesisPlan>("POST", "/synthesize/prepare");
+  }
+
+  /** Store the rules your model distilled. `text: null` records that a cluster
+   * held nothing durable — an outcome, not a failure. */
+  async synthesizeRecord(
+    synthesisToken: string,
+    lessons: DistilledLesson[],
+  ): Promise<Record<string, unknown>> {
+    return this._request("POST", "/synthesize/record", {
+      synthesis_token: synthesisToken,
+      lessons,
+    });
+  }
+
+  /**
+   * Run a whole BYOM synthesis pass, with `distill` as your model.
+   *
+   * `distill(system, prompt)` is called once per cluster and returns the rule, or
+   * null/"NONE" when there is nothing durable in it. The SDK never calls a model
+   * itself — it only owns the loop and the token, which is the tedious part rather
+   * than the part that is yours:
+   *
+   * ```ts
+   * await kw.synthesize((system, prompt) => myLlm(system, prompt));
+   * ```
+   *
+   * A cluster whose `distill` throws is skipped rather than losing the batch; the
+   * others still record.
+   */
+  async synthesize(
+    distill: (system: string, prompt: string) => Promise<string | null> | string | null,
+  ): Promise<Record<string, unknown>> {
+    const plan = await this.synthesizePrepare();
+    if (!plan.synthesis_token) {
+      return {
+        lessons_created: 0,
+        skipped: 0,
+        packets_scanned: plan.packets_scanned ?? 0,
+        status: "skipped",
+      };
+    }
+
+    const lessons: DistilledLesson[] = [];
+    for (const c of plan.clusters ?? []) {
+      let text: string | null = null;
+      try {
+        text = await distill(plan.system ?? "", c.prompt);
+      } catch {
+        text = null; // one bad cluster must not lose the batch
+      }
+      lessons.push({ cluster_id: c.id, text });
+    }
+    return this.synthesizeRecord(plan.synthesis_token, lessons);
   }
 
   // ---- learning / inspection ----
