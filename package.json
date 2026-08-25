@@ -1,6 +1,12 @@
 {
   "name": "@khwan/client",
   "version": "0.2.0",
+  "homepage": "https://khwan.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khwanlabs/khwan-client-ts.git"
+  },
+  "bugs": "https://github.com/khwanlabs/khwan-client-ts/issues",
   "description": "Thin TypeScript client for the Khwan hosted cognition layer (memory + identity + learning). BYOM: prepare context, call your own model, record the result.",
   "type": "module",
   "license": "MIT",
